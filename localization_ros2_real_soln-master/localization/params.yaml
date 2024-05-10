@@ -6,7 +6,9 @@ particle_filter:
     # each particle. This doesn't need to be
     # equal to the actual number (>1000)
     # so long as you downsample properly
-    num_beams_per_particle: 100
+    #TODO: Change back to 100
+    num_beams_per_particle: 10
+    simulation: true
 
     # The field of view centered around theta=0
     scan_field_of_view: 4.71 # radians

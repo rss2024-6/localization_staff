@@ -37,9 +37,18 @@ class ParticleFilter(Node):
         self.ANGLE_STEP = self.get_parameter('angle_step').get_parameter_value().integer_value
         self.DO_VIZ = self.get_parameter('do_viz').get_parameter_value().bool_value
 
+        # self.get_logger().info("particle_filter_frame: %s" % self.particle_filter_frame)
+        # self.get_logger().info("num_particles: %s" % self.MAX_PARTICLES)
+        # self.get_logger().info("max_viz_particles: %s" % self.MAX_VIZ_PARTICLES)
+        # self.get_logger().info("publish_odom: %s" % self.PUBLISH_ODOM)
+        # self.get_logger().info("angle_step: %s" % self.ANGLE_STEP)
+        # self.get_logger().info("do_viz: %s" % self.DO_VIZ)
+        
+        # Quick Paramaters
         self.initiated = False
         self.TEST_MODE = True
         self.SAMPLE_RATE = .1
+        self.debug = True
 
         self.tfBuffer = tf2_ros.Buffer()
         self.listener = tf2_ros.TransformListener(self.tfBuffer, self)
@@ -71,6 +80,9 @@ class ParticleFilter(Node):
         scan_topic = self.get_parameter("scan_topic").get_parameter_value().string_value
         odom_topic = self.get_parameter("odom_topic").get_parameter_value().string_value
 
+        self.get_logger().info(f"scan_topic: {scan_topic}")
+        self.get_logger().info(f"odom_topic: {odom_topic}")
+
         self.estimate_scan_pub = self.create_publisher(LaserScan, "/estimate_scan", 1)
 
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped, "/initialpose", 1)
@@ -85,8 +97,8 @@ class ParticleFilter(Node):
 
         self.particles_pub = self.create_publisher(PoseArray, "/debug", 1)
 
-        self.get_logger().info("%s" % odom_topic)
-        self.get_logger().info("%s" % scan_topic)
+        # self.get_logger().info("%s" % odom_topic)
+        # self.get_logger().info("%s" % scan_topic)
 
         self.laser_sub = self.create_subscription(LaserScan, scan_topic,
                                                   self.laser_callback,
@@ -105,8 +117,24 @@ class ParticleFilter(Node):
         self.pose_sub = self.create_subscription(PoseWithCovarianceStamped, "/initialpose",
                                                  self.pose_callback,
                                                  1)
+        
+        self.sample_location_sub = self.create_subscription(PoseWithCovarianceStamped, "/sample_pose", self.add_sample_pose,1)
 
         self.get_logger().info("=============meow +READY+ meow=============")
+    
+    def add_sample_pose(self, pose):
+        """
+        Adds a sample location to particles. Use this to update the particle filter with outside information on location estimates.
+        """
+        self.lock.acquire()
+        x, y = pose.pose.pose.position.x, pose.pose.pose.position.y
+        theta = euler_from_quaternion(
+            [pose.pose.pose.orientation.x, pose.pose.pose.orientation.y, pose.pose.pose.orientation.z,
+             pose.pose.pose.orientation.w])[-1]
+        indexes = np.random.randint(self.particles.shape[0], size=30)
+        sample_pose = np.array([x, y, theta])
+        self.particles[indexes,:] = np.random.normal(sample_pose, scale=[1.0, 1.0, 0.5])
+        self.lock.release() 
 
     def getOdometryMsg(self, debug=False):
         """
@@ -183,7 +211,8 @@ class ParticleFilter(Node):
 
         self.lock.acquire()
         # Update Step (distribution over the self.num_particles points)
-
+        # self.get_logger().info(f"particles shape: {self.particles.shape}")
+        # self.get_logger().info(f"scan shape: {len(scan.ranges)}")
         self.unnormed_weights = self.sensor_model.evaluate(self.particles, scan.ranges)  # P(z|x) 
         self.best_p = max(self.unnormed_weights)
         self.weights = self.unnormed_weights / np.sum(self.unnormed_weights)
@@ -194,7 +223,7 @@ class ParticleFilter(Node):
         # will sample from 0->num_particles with weights defined as self.weights
 
         # publish average pose
-        msg = self.getOdometryMsg()
+        msg = self.getOdometryMsg(debug = self.debug)
         self.odom_pub.publish(msg)
 
         estimate_particle = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y,
@@ -249,7 +278,7 @@ class ParticleFilter(Node):
 
         self.particles = self.motion_model.evaluate(self.particles, delta_x)
 
-        msg = self.getOdometryMsg()
+        msg = self.getOdometryMsg(debug = self.debug)
         self.odom_pub.publish(msg)
 
         self.lock.release()
@@ -279,7 +308,7 @@ class ParticleFilter(Node):
         theta_samples = (std_theta * np.random.randn(int(self.num_particles)) + theta)[:, None]
 
         self.particles = np.hstack((x_samples, y_samples, theta_samples))
-        msg = self.getOdometryMsg()
+        msg = self.getOdometryMsg(debug=self.debug)
         self.odom_pub.publish(msg)
 
         self.lock.release()
